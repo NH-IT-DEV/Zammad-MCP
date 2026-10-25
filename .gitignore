@@ -232,7 +232,7 @@ tmp/
 
 # Development tools
 mise.local.toml
-.mcp.json
+# .mcp.json is committed: it holds no secrets, only ${VAR} references
 .cursor/
 .cursor/mcp.json
 
