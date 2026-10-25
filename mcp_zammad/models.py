@@ -474,7 +474,7 @@ class TicketUpdateParams(StrictBaseModel):
     @field_validator("custom_fields")
     @classmethod
     def reject_reserved_custom_field_names(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
-        """Reject custom field names that are empty or shadow built-in update fields."""
+        """Reject custom field names that are empty, shadow built-in update fields, or would create an article."""
         if v is None:
             return v
         reserved = set(cls.model_fields) - {"custom_fields"}
@@ -483,6 +483,10 @@ class TicketUpdateParams(StrictBaseModel):
                 raise ValueError("custom_fields keys must be non-empty attribute names")
             if name in reserved:
                 raise ValueError(f"custom_fields key '{name}' is a built-in field; pass it as a top-level parameter")
+            if name.strip().lower().startswith("article"):
+                raise ValueError(
+                    f"custom_fields key '{name}' is not allowed: articles cannot be created through ticket updates"
+                )
         return v
 
 
