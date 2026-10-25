@@ -27,7 +27,7 @@ def test_response_format_accepts_any_case(raw: str, expected: ResponseFormat) ->
     ("raw", "expected"),
     [
         ("NOTE", ArticleType.NOTE),
-        ("Email", ArticleType.EMAIL),
+        ("Phone", ArticleType.PHONE),
         ("PHONE", ArticleType.PHONE),
     ],
 )
@@ -104,6 +104,6 @@ def test_schema_keeps_canonical_values() -> None:
     ticket_schema = GetTicketParams.model_json_schema()
     article_schema = ArticleCreate.model_json_schema()
     assert ticket_schema["$defs"]["ResponseFormat"]["enum"] == ["markdown", "json"]
-    assert article_schema["$defs"]["ArticleType"]["enum"] == ["note", "email", "phone"]
+    assert article_schema["$defs"]["ArticleType"]["enum"] == ["note", "phone"]
     assert article_schema["$defs"]["ArticleSender"]["enum"] == ["Agent", "Customer", "System"]
     assert article_schema["properties"]["content_type"]["enum"] == ["text/plain", "text/html"]

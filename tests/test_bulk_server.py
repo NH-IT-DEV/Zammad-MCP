@@ -55,9 +55,7 @@ async def test_applies_tags_and_note_without_field_update(bulk_server):
     bulk_server.client.update_ticket.assert_not_called()
     assert bulk_server.client.add_ticket_tag.call_args_list == [call(7, "vip"), call(7, "urgent")]
     bulk_server.client.remove_ticket_tag.assert_called_once_with(7, "stale")
-    bulk_server.client.add_article.assert_called_once_with(
-        ticket_id=7, body="Bulk note", article_type="note", internal=True
-    )
+    bulk_server.client.add_article.assert_called_once_with(ticket_id=7, body="Bulk note", article_type="note")
     assert result.successful_ticket_ids == [7]
 
 

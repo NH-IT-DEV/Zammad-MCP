@@ -5,6 +5,7 @@ import ipaddress
 import logging
 import os
 import re as _re
+import uuid
 from collections import deque
 from datetime import date, datetime
 from typing import Any
@@ -31,6 +32,17 @@ _HTTP_NOT_FOUND = 404
 def _is_2xx(status_code: int) -> bool:
     """Return True iff the HTTP status code is a 2xx success."""
     return _HTTP_OK <= status_code < _HTTP_MULTIPLE_CHOICES
+
+
+# Article types Zammad never delivers to the customer. Every other type (email, sms, twitter, ...) can be sent.
+_NON_SENDING_ARTICLE_TYPES = frozenset({"note", "phone"})
+
+
+def _require_non_sending_type(article_type: str) -> None:
+    """Raise ValueError unless the article type is one Zammad never delivers to the customer."""
+    if article_type not in _NON_SENDING_ARTICLE_TYPES:
+        allowed = ", ".join(sorted(_NON_SENDING_ARTICLE_TYPES))
+        raise ValueError(f"article_type '{article_type}' is not allowed: only {allowed} are supported")
 
 
 class ZammadAPIError(Exception):
@@ -344,9 +356,13 @@ class ZammadClient:
         state: str = "new",
         priority: str = "2 normal",
         article_type: str = "note",
-        article_internal: bool = False,
     ) -> dict[str, Any]:
-        """Create a new ticket."""
+        """Create a new ticket whose first article is always internal.
+
+        Raises:
+            ValueError: If article_type is not a non-sending type (note, phone).
+        """
+        _require_non_sending_type(article_type)
         ticket_data = {
             "title": title,
             "group": group,
@@ -356,7 +372,7 @@ class ZammadClient:
             "article": {
                 "body": article_body,
                 "type": article_type,
-                "internal": article_internal,
+                "internal": True,
             },
         }
 
@@ -425,27 +441,22 @@ class ZammadClient:
         ticket_id: int,
         body: str,
         article_type: str = "note",
-        internal: bool = False,
         sender: str = "Agent",
         time_unit: float | None = None,
-        subject: str | None = None,
-        to: str | None = None,
-        cc: str | None = None,
         content_type: str | None = None,
         attachments: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
-        """Add an article (comment/note) to a ticket with optional attachments.
+        """Add an internal article (note/phone) to a ticket with optional attachments.
+
+        The article is always internal and never an email, so Zammad does not deliver it to the
+        customer. Use create_reply_draft for replies.
 
         Args:
             ticket_id: Ticket ID to add article to
             body: Article body content
-            article_type: Article type (note, email, phone)
-            internal: Whether the article is internal
+            article_type: Article type (note, phone)
             sender: Sender type (Agent, Customer, System)
             time_unit: Time spent for time accounting (unit defined in Zammad admin settings)
-            subject: Optional email subject
-            to: Optional email recipient
-            cc: Optional email CC recipient(s)
             content_type: Optional content type (text/plain or text/html)
             attachments: Optional list of attachments with keys:
                 - filename: str
@@ -454,7 +465,11 @@ class ZammadClient:
 
         Returns:
             Created article data with attachment metadata
+
+        Raises:
+            ValueError: If article_type is not a non-sending type (note, phone) or time_unit is not positive.
         """
+        _require_non_sending_type(article_type)
         if time_unit is not None and time_unit <= 0:
             raise ValueError("time_unit must be greater than 0")
 
@@ -462,18 +477,12 @@ class ZammadClient:
             "ticket_id": ticket_id,
             "body": body,
             "type": article_type,
-            "internal": internal,
+            "internal": True,
             "sender": sender,
         }
 
         if time_unit is not None:
             article_data["time_unit"] = time_unit
-        if subject is not None:
-            article_data["subject"] = subject
-        if to is not None:
-            article_data["to"] = to
-        if cc is not None:
-            article_data["cc"] = cc
         if content_type is not None:
             article_data["content_type"] = content_type
 
@@ -481,6 +490,52 @@ class ZammadClient:
             article_data["attachments"] = attachments
 
         return dict(self.api.ticket_article.create(article_data))
+
+    def create_reply_draft(
+        self,
+        ticket_id: int,
+        body: str,
+        subject: str | None = None,
+        to: str | None = None,
+        cc: str | None = None,
+    ) -> dict[str, Any]:
+        """Store a reply as a Zammad shared draft on a ticket. Nothing is sent.
+
+        Uses a direct HTTP call via zammad_py's internal session because the
+        shared-draft endpoint is not exposed by the library. An agent reviews
+        and sends the draft manually in the Zammad UI.
+
+        Args:
+            ticket_id: Internal ticket ID.
+            body: Reply body as HTML (escape plain text before passing it in).
+            subject: Optional. Subject of the reply.
+            to: Optional. Recipient of the reply.
+            cc: Optional. CC recipient(s) of the reply.
+
+        Returns:
+            Zammad's response with ``shared_draft_id`` and ``assets``.
+
+        Raises:
+            ZammadAPIError: If Zammad answers with a non-2xx status (for example when
+                shared drafts are disabled or the ticket already has a draft).
+        """
+        optional = {"subject": subject, "to": to, "cc": cc}
+        new_article = {
+            "ticket_id": ticket_id,
+            "type": "email",
+            "sender": "Agent",
+            "internal": False,
+            "content_type": "text/html",
+            "body": body,
+            **{key: value for key, value in optional.items() if value is not None},
+        }
+        payload = {"form_id": str(uuid.uuid4()), "new_article": new_article, "ticket_attributes": {}}
+        response = self.api.session.put(
+            f"{self.api.url}tickets/{ticket_id}/shared_draft", json=payload, timeout=REQUEST_TIMEOUT_SECONDS
+        )
+        if not _is_2xx(response.status_code):
+            raise ZammadAPIError(response.status_code, response.url, response.text)
+        return dict(response.json())
 
     def get_user(self, user_id: int) -> dict[str, Any]:
         """Get user information by ID."""

@@ -52,6 +52,8 @@ from .models import (
     ListParams,
     Organization,
     PriorityBrief,
+    ReplyDraft,
+    ReplyDraftCreate,
     ResponseFormat,
     SearchKBAnswersParams,
     SearchOrganizationsParams,
@@ -1362,7 +1364,7 @@ def _apply_bulk_ticket_actions(client: ZammadClient, ticket_id: int, params: Bul
     for tag in params.remove_tags or []:
         client.remove_ticket_tag(ticket_id, tag)
     if params.note is not None:
-        client.add_article(ticket_id=ticket_id, body=params.note, article_type="note", internal=True)
+        client.add_article(ticket_id=ticket_id, body=params.note, article_type="note")
 
 
 def _run_bulk_ticket_update(client: ZammadClient, params: BulkTicketUpdateParams) -> BulkUpdateResult:
@@ -1821,12 +1823,14 @@ class ZammadMCPServer:
         @self.mcp.tool(annotations=_write_annotations("Create New Ticket"))
         @flat_params(TicketCreate)
         def zammad_create_ticket(params: TicketCreate) -> Ticket:
-            """Create a new ticket in Zammad with initial article.
+            """Create a new ticket in Zammad with an initial internal article.
 
             The customer must already exist in Zammad; create one with zammad_create_user if
             needed. Group, state, and priority take names from zammad_list_groups,
-            zammad_list_ticket_states, and zammad_list_ticket_priorities. To comment on an
-            existing ticket use zammad_add_article.
+            zammad_list_ticket_states, and zammad_list_ticket_priorities. The initial article
+            is always internal and is never sent to the customer. To comment on an
+            existing ticket use zammad_add_article; to prepare a reply use
+            zammad_create_reply_draft.
 
             Args:
                 params (TicketCreate): Validated ticket creation parameters containing:
@@ -1837,8 +1841,7 @@ class ZammadMCPServer:
                     - article_body (str): Initial article/comment body (required)
                     - state (str): State name (default: "new")
                     - priority (str): Priority name (default: "2 normal")
-                    - article_type (str): Article type - "note", "email", "phone" (default: "note")
-                    - article_internal (bool): Whether article is internal-only (default: False)
+                    - article_type (ArticleType): Article type - "note" or "phone" (default: "note")
 
             Returns:
                 Ticket: The created ticket object with schema:
@@ -1964,25 +1967,22 @@ class ZammadMCPServer:
         @self.mcp.tool(annotations=_write_annotations("Add Ticket Article"))
         @flat_params(ArticleCreate)
         def zammad_add_article(params: ArticleCreate) -> Article:
-            """Add an article (comment/note/email) to an existing ticket with optional attachments.
+            """Add an internal note or phone article to an existing ticket with optional attachments.
 
-            Use the internal ticket_id, not the ticket number. Set internal=true for a note that
-            only agents see. text/plain bodies are HTML-escaped before sending. To open a ticket
-            use zammad_create_ticket; to change ticket fields use zammad_update_ticket.
+            Use the internal ticket_id, not the ticket number. The article is always internal and
+            is never sent to the customer; email articles are not supported. To prepare a reply
+            use zammad_create_reply_draft. To open a ticket use zammad_create_ticket; to change
+            ticket fields use zammad_update_ticket.
 
             Args:
                 params (ArticleCreate): Validated article creation parameters containing:
                     - ticket_id (int): Internal database ID (required, NOT display number)
                     - body (str): Article content/message (required)
-                    - article_type (ArticleType): Article type - note, email, or phone (default: note)
-                    - internal (bool): Internal note vs customer-visible (default: False)
+                    - article_type (ArticleType): Article type - note or phone (default: note)
                     - sender (ArticleSender): Agent, Customer, or System (default: Agent)
-                    - subject (str | None): Article subject (for emails)
                     - content_type (str | None): text/plain or text/html (default: text/plain).
                       text/plain bodies are HTML-escaped (<, >, &) by ArticleCreate.sanitize_body;
                       text/html bodies have script tags and javascript: URLs neutralized
-                    - to (str | None): Email recipient (for email type)
-                    - cc (str | None): Email CC recipients
                     - time_unit (float | None): Time spent for time accounting (> 0)
                     - attachments (list[AttachmentUpload] | None): Optional attachments (max 10)
 
@@ -1995,7 +1995,7 @@ class ZammadMCPServer:
                     "ticket_id": 123,
                     "body": "Article content",
                     "type": "note",
-                    "internal": false,
+                    "internal": true,
                     "created_at": "2024-01-15T16:30:00Z",
                     "created_by": {"id": 2, "email": "agent@company.com"}
                 }
@@ -2003,14 +2003,15 @@ class ZammadMCPServer:
 
             Examples:
                 - Use when: "Add note to ticket 123" -> ticket_id=123, body="text", article_type="note"
-                - Use when: "Reply to customer" -> ticket_id=123, body="reply", article_type="email"
-                - Use when: "Internal comment" -> ticket_id=123, body="note", article_type="note", internal=True
+                - Use when: "Log a phone call" -> ticket_id=123, body="Customer called ...", article_type="phone"
+                - Don't use when: "Reply to customer" (use zammad_create_reply_draft; replies are never sent)
                 - Use when: "Upload files with article" -> ticket_id=123, body="See attached", attachments=[...]
                 - Don't use when: Creating new ticket (use zammad_create_ticket with article)
                 - Don't use when: Updating ticket fields (use zammad_update_ticket)
 
             Error Handling:
-                - A missing body or an unknown article_type fails Pydantic validation before
+                - A missing body, an unknown article_type (including email), or any of the
+                  removed fields internal, subject, to, cc fails Pydantic validation before
                   any API call
                 - Zammad errors (HTTP error text for 401/403/404, e.g. unknown ticket_id)
                   propagate unchanged; FastMCP returns a tool error with that text
@@ -2052,6 +2053,48 @@ class ZammadMCPServer:
             )
 
             return Article(**article_data)
+
+        @self.mcp.tool(annotations=_write_annotations("Create Reply Draft"))
+        @flat_params(ReplyDraftCreate)
+        def zammad_create_reply_draft(params: ReplyDraftCreate) -> ReplyDraft:
+            """Store a reply to the customer as a Zammad shared draft. Nothing is sent.
+
+            Use this to prepare an answer; an agent reviews it and sends it manually in the
+            Zammad ticket. This server cannot send mail. Use the internal ticket_id, not the
+            ticket number. For internal notes use zammad_add_article. Requires the Zammad
+            shared drafts feature (Zammad 6.0+).
+
+            Args:
+                params (ReplyDraftCreate): Validated draft parameters containing:
+                    - ticket_id (int): Internal database ID (required, NOT display number)
+                    - body (str): Plain-text reply (required); HTML-escaped, line breaks kept
+                    - subject (str | None): Subject of the reply
+                    - to (str | None): Recipient of the reply
+                    - cc (str | None): CC recipient(s) of the reply
+
+            Returns:
+                ReplyDraft: The stored draft:
+
+                ```json
+                {"shared_draft_id": 7, "ticket_id": 123}
+                ```
+
+            Examples:
+                - Use when: "Draft an answer for ticket 123" -> ticket_id=123, body="Hallo ..."
+                - Don't use when: Internal comment (use zammad_add_article)
+
+            Error Handling:
+                - A missing body or unknown field fails Pydantic validation before any API call
+                - Zammad errors (shared drafts disabled, missing permission, unknown ticket_id,
+                  existing draft) propagate as ZammadAPIError with the HTTP status and body
+
+            Note:
+                ticket_id must be the internal database ID, NOT the display number.
+                The draft is shared: every agent with access to the ticket sees it.
+            """
+            client = self.get_client()
+            draft = client.create_reply_draft(**params.model_dump())
+            return ReplyDraft(shared_draft_id=draft["shared_draft_id"], ticket_id=params.ticket_id)
 
         @self.mcp.tool(annotations=_read_only_annotations("Get Article Attachments"))
         @flat_params(GetArticleAttachmentsParams)
@@ -3816,7 +3859,7 @@ First, use zammad_get_ticket to understand the issue and conversation history. T
 3. Maintains a {tone} tone throughout
 4. Is concise and easy to understand
 
-After drafting, you can use zammad_add_article to add the response to the ticket if approved."""
+After drafting, use zammad_create_reply_draft to store the response as a draft on the ticket. This server cannot send mail; an agent reviews and sends the draft manually in Zammad."""
 
         @self.mcp.prompt()
         def escalation_summary(group: str | None = None) -> str:

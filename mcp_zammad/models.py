@@ -54,16 +54,17 @@ class ResponseFormat(CaseInsensitiveStrEnum):
 
 
 class ArticleType(CaseInsensitiveStrEnum):
-    """Article type enumeration.
+    """Article type enumeration for articles this server may create.
+
+    Only types that Zammad never delivers to the customer are listed. Email and the other
+    channel types (sms, twitter, ...) are deliberately absent.
 
     Attributes:
         NOTE: Internal note
-        EMAIL: Email communication
         PHONE: Phone call record
     """
 
     NOTE = "note"
-    EMAIL = "email"
     PHONE = "phone"
 
 
@@ -302,8 +303,7 @@ class TicketCreate(StrictBaseModel):
     article_body: str = Field(description="Initial article/comment body", max_length=100000)
     state: str = Field(default="new", description="State name (new, open, pending reminder, etc.)", max_length=100)
     priority: str = Field(default="2 normal", description="Priority name (1 low, 2 normal, 3 high)", max_length=100)
-    article_type: str = Field(default="note", description="Article type (note, email, phone)", max_length=50)
-    article_internal: bool = Field(default=False, description="Whether the article is internal")
+    article_type: ArticleType = Field(default=ArticleType.NOTE, description="Article type (note, phone)")
 
     @field_validator("title", "article_body")
     @classmethod
@@ -365,12 +365,8 @@ class ArticleCreate(StrictBaseModel):
 
     ticket_id: int = Field(description="Ticket ID to add article to", gt=0)
     body: str = Field(description="Article body content", max_length=100000)
-    article_type: ArticleType = Field(default=ArticleType.NOTE, alias="type", description="Article type")
-    internal: bool = Field(default=False, description="Whether the article is internal")
+    article_type: ArticleType = Field(default=ArticleType.NOTE, alias="type", description="Article type (note, phone)")
     sender: ArticleSender = Field(default=ArticleSender.AGENT, description="Sender type")
-    subject: str | None = Field(default=None, max_length=500, description="Email subject")
-    to: str | None = Field(default=None, max_length=1000, description="Email recipient")
-    cc: str | None = Field(default=None, max_length=1000, description="Email CC recipient(s)")
     content_type: ContentType = Field(default="text/plain", description="Article content type")
     time_unit: float | None = Field(
         default=None, description="Time spent for time accounting (unit defined in Zammad admin settings)", gt=0
@@ -395,6 +391,29 @@ class ArticleCreate(StrictBaseModel):
     def _sanitize_html_body(value: str) -> str:
         """Remove high-risk HTML constructs while preserving basic HTML markup."""
         return value.replace("<script", "&lt;script").replace("</script", "&lt;/script").replace("javascript:", "")
+
+
+class ReplyDraftCreate(StrictBaseModel):
+    """Reply draft request: stored as a Zammad shared draft, never sent."""
+
+    ticket_id: int = Field(description="Ticket ID to draft the reply for", gt=0)
+    body: str = Field(description="Plain-text reply body; line breaks are kept", max_length=100000)
+    subject: str | None = Field(default=None, max_length=500, description="Subject of the reply")
+    to: str | None = Field(default=None, max_length=1000, description="Recipient of the reply")
+    cc: str | None = Field(default=None, max_length=1000, description="CC recipient(s) of the reply")
+
+    @field_validator("body")
+    @classmethod
+    def body_to_html(cls, v: str) -> str:
+        """Escape HTML and turn line breaks into <br>; Zammad's draft editor stores HTML."""
+        return html.escape(v, quote=False).replace("\r\n", "\n").replace("\n", "<br>")
+
+
+class ReplyDraft(BaseModel):
+    """A stored reply draft. An agent reviews and sends it manually in Zammad."""
+
+    shared_draft_id: int
+    ticket_id: int
 
 
 class GetTicketParams(StrictBaseModel):

@@ -552,11 +552,7 @@ def test_add_article_tool(mock_zammad_client, sample_article_data, decorator_cap
         article_type="note",
         attachments=None,
         body="New comment",
-        internal=False,
         sender="Agent",
-        subject=None,
-        to=None,
-        cc=None,
         content_type="text/plain",
         time_unit=None,
     )
@@ -584,41 +580,6 @@ def test_add_article_with_time_unit_tool(mock_zammad_client, sample_article_data
     mock_instance.add_article.assert_called_once()
     call_kwargs = mock_instance.add_article.call_args[1]
     assert call_kwargs["time_unit"] == 30.5
-
-
-def test_add_article_with_email_fields(mock_zammad_client, sample_article_data, decorator_capturer):
-    """Test zammad_add_article tool forwards email-specific fields."""
-    mock_instance, _ = mock_zammad_client
-    mock_instance.add_article.return_value = sample_article_data
-
-    server_inst = ZammadMCPServer()
-    server_inst.client = mock_instance
-
-    test_tools, capture_tool = decorator_capturer(server_inst.mcp.tool)
-    server_inst.mcp.tool = capture_tool  # type: ignore[method-assign, assignment]
-    server_inst.get_client = lambda: server_inst.client  # type: ignore[method-assign, assignment, return-value]
-    server_inst._setup_tools()
-
-    params = ArticleCreate(
-        ticket_id=1,
-        body="<p>Email body</p>",
-        article_type=ArticleType.EMAIL,
-        subject="Follow up",
-        to="customer@example.com",
-        cc="manager@example.com",
-        content_type="text/html",
-    )
-    result = test_tools["zammad_add_article"](**params.model_dump())
-
-    assert result.body == "Test article"
-    mock_instance.add_article.assert_called_once()
-    call_kwargs = mock_instance.add_article.call_args[1]
-    assert call_kwargs["article_type"] == "email"
-    assert call_kwargs["subject"] == "Follow up"
-    assert call_kwargs["to"] == "customer@example.com"
-    assert call_kwargs["cc"] == "manager@example.com"
-    assert call_kwargs["content_type"] == "text/html"
-    assert call_kwargs["body"] == "<p>Email body</p>"
 
 
 def test_add_article_without_time_unit_tool(mock_zammad_client, sample_article_data, decorator_capturer):
@@ -686,8 +647,8 @@ def test_add_article_invalid_sender():
 def test_add_article_backward_compat_alias():
     """Test that ArticleCreate accepts 'type' alias for backward compatibility."""
     # Test using alias 'type' instead of 'article_type'
-    params = ArticleCreate(ticket_id=1, body="test", type="email")
-    assert params.article_type == ArticleType.EMAIL
+    params = ArticleCreate(ticket_id=1, body="test", type="note")
+    assert params.article_type == ArticleType.NOTE
 
     # Test that field is accessible as article_type
     params2 = ArticleCreate(ticket_id=1, body="test", type=ArticleType.PHONE)
@@ -727,7 +688,6 @@ def test_add_article_with_attachments_tool(mock_zammad_client, decorator_capture
         ticket_id=123,
         body="See attachment",
         article_type=ArticleType.NOTE,
-        internal=False,
         sender=ArticleSender.AGENT,
         attachments=[AttachmentUpload(filename="doc.pdf", data="dGVzdA==", mime_type="application/pdf")],
     )
@@ -778,7 +738,7 @@ def test_add_article_without_attachments_backward_compat_tool(mock_zammad_client
     server_inst._setup_tools()
 
     params = ArticleCreate(
-        ticket_id=123, body="Simple comment", article_type=ArticleType.NOTE, internal=False, sender=ArticleSender.AGENT
+        ticket_id=123, body="Simple comment", article_type=ArticleType.NOTE, sender=ArticleSender.AGENT
     )
 
     # Call tool
@@ -1772,7 +1732,8 @@ def test_prompt_handlers(decorator_capturer):
     assert "draft_response" in test_prompts
     result = test_prompts["draft_response"](ticket_id="123", tone="friendly")
     assert "draft a friendly response to ticket with ID 123" in result
-    assert "add_article" in result
+    assert "zammad_create_reply_draft" in result
+    assert "zammad_add_article" not in result
 
     # Test escalation_summary prompt
     assert "escalation_summary" in test_prompts

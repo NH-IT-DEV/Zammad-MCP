@@ -121,9 +121,9 @@ async def test_add_article_exposes_field_name_and_sanitizes_body(harness: Harnes
     assert "type" not in properties
 
     async with Client(harness.server.mcp) as client:
-        await client.call_tool("zammad_add_article", {"ticket_id": 1, "body": "<b>hi</b>", "article_type": "email"})
+        await client.call_tool("zammad_add_article", {"ticket_id": 1, "body": "<b>hi</b>", "article_type": "phone"})
     call_kwargs = harness.zammad.add_article.call_args.kwargs
-    assert call_kwargs["article_type"] == "email"
+    assert call_kwargs["article_type"] == "phone"
     assert call_kwargs["body"] == "&lt;b&gt;hi&lt;/b&gt;"
 
 

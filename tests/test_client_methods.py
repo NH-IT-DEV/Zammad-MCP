@@ -511,8 +511,7 @@ class TestZammadClientMethods:
             article_body="Please help!",
             state="open",
             priority="3 high",
-            article_type="email",
-            article_internal=True,
+            article_type="phone",
         )
 
         assert result["id"] == 1
@@ -523,25 +522,23 @@ class TestZammadClientMethods:
                 "customer": "customer@example.com",
                 "state": "open",
                 "priority": "3 high",
-                "article": {"body": "Please help!", "type": "email", "internal": True},
+                "article": {"body": "Please help!", "type": "phone", "internal": True},
             }
         )
 
     def test_add_article(self, mock_zammad_api: Mock) -> None:
         """Test add_article method."""
         mock_instance = Mock()
-        mock_instance.ticket_article.create.return_value = {"id": 1, "body": "Response", "type": "email"}
+        mock_instance.ticket_article.create.return_value = {"id": 1, "body": "Response", "type": "phone"}
         mock_zammad_api.return_value = mock_instance
 
         client = ZammadClient(url="https://test.zammad.com/api/v1", http_token="test-token")
 
-        result = client.add_article(
-            ticket_id=1, body="Response", article_type="email", internal=True, sender="Customer"
-        )
+        result = client.add_article(ticket_id=1, body="Response", article_type="phone", sender="Customer")
 
         assert result["id"] == 1
         mock_instance.ticket_article.create.assert_called_once_with(
-            {"ticket_id": 1, "body": "Response", "type": "email", "internal": True, "sender": "Customer"}
+            {"ticket_id": 1, "body": "Response", "type": "phone", "internal": True, "sender": "Customer"}
         )
 
     def test_add_article_with_time_unit(self, mock_zammad_api: Mock) -> None:
@@ -560,41 +557,30 @@ class TestZammadClientMethods:
                 "ticket_id": 1,
                 "body": "Worked on it",
                 "type": "note",
-                "internal": False,
+                "internal": True,
                 "sender": "Agent",
                 "time_unit": 15.0,
             }
         )
 
-    def test_add_article_with_email_fields(self, mock_zammad_api: Mock) -> None:
-        """Test add_article method includes optional email fields."""
+    def test_add_article_with_content_type(self, mock_zammad_api: Mock) -> None:
+        """Test add_article method includes the optional content type."""
         mock_instance = Mock()
-        mock_instance.ticket_article.create.return_value = {"id": 4, "body": "Email body", "type": "email"}
+        mock_instance.ticket_article.create.return_value = {"id": 4, "body": "<p>Hi</p>", "type": "note"}
         mock_zammad_api.return_value = mock_instance
 
         client = ZammadClient(url="https://test.zammad.com/api/v1", http_token="test-token")
 
-        result = client.add_article(
-            ticket_id=1,
-            body="Email body",
-            article_type="email",
-            subject="Follow up",
-            to="customer@example.com",
-            cc="manager@example.com",
-            content_type="text/html",
-        )
+        result = client.add_article(ticket_id=1, body="<p>Hi</p>", content_type="text/html")
 
         assert result["id"] == 4
         mock_instance.ticket_article.create.assert_called_once_with(
             {
                 "ticket_id": 1,
-                "body": "Email body",
-                "type": "email",
-                "internal": False,
+                "body": "<p>Hi</p>",
+                "type": "note",
+                "internal": True,
                 "sender": "Agent",
-                "subject": "Follow up",
-                "to": "customer@example.com",
-                "cc": "manager@example.com",
                 "content_type": "text/html",
             }
         )

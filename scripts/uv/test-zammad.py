@@ -297,7 +297,7 @@ class ZammadTestClient:
                     "title": title,
                     "group": group,
                     "customer_id": self.user_info["id"],  # Use current user as customer
-                    "article": {"body": article_body, "type": "note", "internal": False},
+                    "article": {"body": article_body, "type": "note", "internal": True},
                 }
 
                 ticket = self.client.ticket.create(ticket_data)

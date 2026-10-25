@@ -17,7 +17,8 @@ An MCP server that connects AI assistants to Zammad, providing tools for managin
   - `zammad_get_ticket` - Get detailed ticket information with articles (supports pagination); custom object attributes are included
   - `zammad_create_ticket` - Create new tickets
   - `zammad_update_ticket` - Update ticket properties, including custom object attributes via `custom_fields`
-  - `zammad_add_article` - Add comments/notes to tickets
+  - `zammad_add_article` - Add internal notes or phone articles to tickets (always internal; never sent to the customer)
+  - `zammad_create_reply_draft` - Store a reply as a Zammad shared draft (needs Zammad 6.0+). The server cannot send mail; an agent sends the draft manually in Zammad
   - `zammad_merge_tickets` - Merge a ticket into another (irreversible)
   - `zammad_add_ticket_tag` / `zammad_remove_ticket_tag` - Manage ticket tags
   - `zammad_bulk_update_tickets` - Update, assign, tag, or close up to 100 tickets in one call with per-ticket failure reporting
@@ -353,7 +354,7 @@ Use zammad_create_ticket with:
 
 ```text
 1. Use zammad_get_ticket with ticket_id=123 to see the full conversation
-2. Use zammad_add_article to add your response
+2. Use zammad_create_reply_draft to store your response as a draft (an agent sends it in Zammad)
 3. Use zammad_update_ticket to change state to "pending reminder" with a pending_time (e.g. "2026-07-01T08:00:00Z")
 ```
 
