@@ -45,6 +45,18 @@ def _require_non_sending_type(article_type: str) -> None:
         raise ValueError(f"article_type '{article_type}' is not allowed: only {allowed} are supported")
 
 
+def _reject_article_key(name: str) -> None:
+    """Raise ValueError for keys that make Zammad create an article on ticket update.
+
+    Zammad's ticket update endpoint turns a nested ``article`` object into a new article,
+    including email articles that are delivered to the customer.
+    """
+    if name.strip().lower().startswith("article"):
+        raise ValueError(
+            f"custom_fields key '{name}' is not allowed: articles cannot be created through ticket updates"
+        )
+
+
 class ZammadAPIError(Exception):
     """
     Raised when the Zammad API returns a non-2xx response.
@@ -409,7 +421,8 @@ class ZammadClient:
             The updated ticket as returned by Zammad.
 
         Raises:
-            ValueError: If time_unit is not positive or a custom field shadows a built-in key.
+            ValueError: If time_unit is not positive, a custom field shadows a built-in key,
+                or a custom field would create an article.
         """
         if time_unit is not None and time_unit <= 0:
             raise ValueError("time_unit must be greater than 0")
@@ -432,6 +445,7 @@ class ZammadClient:
         for name in custom_fields or {}:
             if name in built_in:
                 raise ValueError(f"custom_fields key '{name}' is a built-in field; pass it as a named argument")
+            _reject_article_key(name)
         update_data.update(custom_fields or {})
 
         return dict(self.api.ticket.update(ticket_id, update_data))

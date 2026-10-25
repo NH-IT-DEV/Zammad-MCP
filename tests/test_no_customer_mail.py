@@ -190,3 +190,31 @@ def test_client_create_ticket_has_no_article_internal_parameter(zammad_api: Magi
             article_internal=False,  # type: ignore[call-arg]
         )
     zammad_api.ticket.create.assert_not_called()
+
+
+# --- zammad_update_ticket: no articles through custom_fields ------------------------------------
+
+EMAIL_ARTICLE = {"type": "email", "internal": False, "to": "customer@example.com", "body": "hi"}
+
+
+@pytest.mark.parametrize("key", ["article", "Article", " article ", "article_attributes"])
+@pytest.mark.asyncio
+async def test_update_ticket_rejects_article_in_custom_fields(harness: Harness, key: str) -> None:
+    message = await _call_expecting_error(
+        harness.server, "zammad_update_ticket", {"ticket_id": 1, "custom_fields": {key: EMAIL_ARTICLE}}
+    )
+    assert "article" in message.lower()
+    harness.zammad.update_ticket.assert_not_called()
+
+
+@pytest.mark.parametrize("key", ["article", "ARTICLE"])
+def test_client_update_ticket_rejects_article_in_custom_fields(zammad_api: MagicMock, key: str) -> None:
+    with pytest.raises(ValueError, match="article"):
+        ZammadClient().update_ticket(ticket_id=1, custom_fields={key: EMAIL_ARTICLE})
+    zammad_api.ticket.update.assert_not_called()
+
+
+def test_client_update_ticket_keeps_plain_custom_fields(zammad_api: MagicMock) -> None:
+    zammad_api.ticket.update.return_value = {"id": 1}
+    ZammadClient().update_ticket(ticket_id=1, custom_fields={"region": "north"})
+    assert zammad_api.ticket.update.call_args[0][1] == {"region": "north"}
