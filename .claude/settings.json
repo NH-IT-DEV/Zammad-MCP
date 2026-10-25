@@ -1,4 +1,7 @@
 {
+  "enabledMcpjsonServers": [
+    "zammad"
+  ],
   "hooks": {
     "PostToolUse": [
       {
