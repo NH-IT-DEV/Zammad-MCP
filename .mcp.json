@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "git+https://github.com/NH-IT-DEV/Zammad-MCP@e32d481a58f0731f5fbbcc382256ce4cb89709e6",
+        "git+https://github.com/NH-IT-DEV/Zammad-MCP@6a67e004320089c96a4a63c7df0282d1ed580be7",
         "mcp-zammad"
       ],
       "env": {
