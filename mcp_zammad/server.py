@@ -120,6 +120,38 @@ ARTICLE_BODY_TRUNCATE_LENGTH = 500  # Maximum length for article body in markdow
 MAX_EXPORT_ERRORS_LOGGED = 100  # Maximum number of per-ticket errors to log during export
 
 
+# The only tools that may change anything. Every other tool must be annotated readOnlyHint=True,
+# otherwise it is never registered (fail closed, also for write tools added upstream later).
+PERMITTED_WRITE_TOOLS = frozenset({"zammad_create_ticket", "zammad_create_reply_draft"})
+
+
+def _guard_write_tools(mcp: FastMCP) -> None:
+    """Replace ``mcp.tool`` so it registers only read-only tools and PERMITTED_WRITE_TOOLS.
+
+    Blocked tools are skipped silently at registration: they are not listed and not callable.
+    """
+    register = mcp.tool
+
+    def guarded_tool(name_or_fn: Any = None, **kwargs: Any) -> Any:
+        if isinstance(name_or_fn, str):
+            kwargs.setdefault("name", name_or_fn)
+        annotations = kwargs.get("annotations")
+        if isinstance(annotations, dict):
+            annotations = ToolAnnotations(**annotations)
+        read_only = isinstance(annotations, ToolAnnotations) and annotations.readOnlyHint is True
+
+        def apply(func: Any) -> Any:
+            name = kwargs.get("name") or func.__name__
+            if read_only or name in PERMITTED_WRITE_TOOLS:
+                return register(func, **kwargs)
+            logger.debug("Write tool %s is not permitted in this server and was not registered", name)
+            return func
+
+        return apply(name_or_fn) if callable(name_or_fn) else apply
+
+    mcp.tool = guarded_tool  # type: ignore[method-assign]
+
+
 # Tool annotation constants
 def _read_only_annotations(title: str) -> ToolAnnotations:
     """Create read-only tool annotations with title."""
@@ -1486,6 +1518,7 @@ class ZammadMCPServer:
         self.mcp = FastMCP("zammad_mcp", lifespan=self._create_lifespan())
         if self.audit.enabled:
             self.mcp.add_middleware(AuditMiddleware(self.audit))
+        _guard_write_tools(self.mcp)
         self._setup_tools()
         self._setup_resources()
         self._setup_prompts()
@@ -1823,14 +1856,15 @@ class ZammadMCPServer:
         @self.mcp.tool(annotations=_write_annotations("Create New Ticket"))
         @flat_params(TicketCreate)
         def zammad_create_ticket(params: TicketCreate) -> Ticket:
-            """Create a new ticket in Zammad with an initial internal article.
+            """Create a new phone ticket in Zammad to record a customer call.
 
-            The customer must already exist in Zammad; create one with zammad_create_user if
-            needed. Group, state, and priority take names from zammad_list_groups,
-            zammad_list_ticket_states, and zammad_list_ticket_priorities. The initial article
-            is always internal and is never sent to the customer. To comment on an
-            existing ticket use zammad_add_article; to prepare a reply use
-            zammad_create_reply_draft.
+            This is the only way this server creates tickets, and it creates phone tickets
+            only: the initial article is always type phone, sender Agent, and internal. It is
+            never sent to the customer and does not trigger Zammad's default auto reply.
+            The customer must already exist in Zammad (find them with zammad_search_users).
+            Group, state, and priority take names from zammad_list_groups,
+            zammad_list_ticket_states, and zammad_list_ticket_priorities. To prepare a reply
+            on an existing ticket use zammad_create_reply_draft.
 
             Args:
                 params (TicketCreate): Validated ticket creation parameters containing:
@@ -1838,10 +1872,9 @@ class ZammadMCPServer:
                     - group (str): Group name or ID (required; forwarded to Zammad as-is)
                     - customer (str): Customer email or ID (required, must exist in Zammad;
                       forwarded to Zammad as-is)
-                    - article_body (str): Initial article/comment body (required)
+                    - article_body (str): Call notes (required)
                     - state (str): State name (default: "new")
                     - priority (str): Priority name (default: "2 normal")
-                    - article_type (ArticleType): Article type - "note" or "phone" (default: "note")
 
             Returns:
                 Ticket: The created ticket object with schema:
@@ -1860,23 +1893,24 @@ class ZammadMCPServer:
                 ```
 
             Examples:
-                - Use when: "Create ticket for server outage" -> title, group, customer, article_body
-                - Use when: "New high priority ticket" -> add priority="3 high"
-                - Don't use when: Ticket already exists (use zammad_update_ticket)
-                - Don't use when: Only adding comment (use zammad_add_article)
+                - Use when: "Customer called about a server outage, open a ticket" -> title,
+                  group, customer, article_body with the call notes
+                - Use when: "Log that call as a high priority ticket" -> add priority="3 high"
+                - Don't use when: The ticket already exists (this server cannot change tickets)
+                - Don't use when: Replying to the customer (use zammad_create_reply_draft)
 
             Error Handling:
                 - Missing or oversized fields fail Pydantic validation before any API call;
                   FastMCP returns the validation error as a tool error
-                - Raises ValueError with customer guidance (check with zammad_search_users,
-                  create with zammad_create_user) when Zammad's error mentions the customer
-                  as not found / couldn't find / lookup
+                - Raises ValueError with customer guidance (check with zammad_search_users;
+                  new customers must be created in Zammad by an agent) when Zammad's error
+                  mentions the customer as not found / couldn't find / lookup
                 - Any other exception (Zammad HTTP error text for 401/403/422, e.g. unknown
                   group or state) propagates; FastMCP returns a tool error with that text
 
             Note:
-                The customer must exist in Zammad before creating a ticket.
-                Use zammad_create_user to create new customers first.
+                The customer must exist in Zammad before creating a ticket. This server cannot
+                create customers; ask an agent to create them in Zammad first.
             """
             client = self.get_client()
             try:
@@ -1890,8 +1924,8 @@ class ZammadMCPServer:
                     raise ValueError(
                         f"Customer '{params.customer}' not found in Zammad. "
                         f"Note: Customers must exist before creating tickets. "
-                        f"Use zammad_search_users to check, or zammad_create_user to create. "
-                        f"Example: zammad_create_user(email='{params.customer}', firstname='...', lastname='...')"
+                        f"Use zammad_search_users to find the existing customer. "
+                        f"This server cannot create customers; an agent must create them in Zammad first."
                     ) from e
                 raise
 
@@ -2061,7 +2095,7 @@ class ZammadMCPServer:
 
             Use this to prepare an answer; an agent reviews it and sends it manually in the
             Zammad ticket. This server cannot send mail. Use the internal ticket_id, not the
-            ticket number. For internal notes use zammad_add_article. Requires the Zammad
+            ticket number. This server cannot add internal notes. Requires the Zammad
             shared drafts feature (Zammad 6.0+).
 
             Args:
@@ -2081,7 +2115,7 @@ class ZammadMCPServer:
 
             Examples:
                 - Use when: "Draft an answer for ticket 123" -> ticket_id=123, body="Hallo ..."
-                - Don't use when: Internal comment (use zammad_add_article)
+                - Don't use when: Internal comment (this server cannot add notes or articles)
 
             Error Handling:
                 - A missing body or unknown field fails Pydantic validation before any API call
@@ -3149,7 +3183,7 @@ class ZammadMCPServer:
             """Get complete list of all available groups (cached).
 
             List all groups instead of searching. Group names work
-            in zammad_create_ticket, zammad_update_ticket, and zammad_search_tickets.
+            in zammad_create_ticket and zammad_search_tickets.
 
             Args:
                 params (ListParams): Validated parameters containing:
@@ -3216,7 +3250,7 @@ class ZammadMCPServer:
             """Get complete list of all available ticket states (cached).
 
             List all states instead of searching. State names work
-            in zammad_create_ticket, zammad_update_ticket, and zammad_search_tickets.
+            in zammad_create_ticket and zammad_search_tickets.
 
             Args:
                 params (ListParams): Validated parameters containing:
@@ -3290,7 +3324,7 @@ class ZammadMCPServer:
             """Get complete list of all available ticket priorities (cached).
 
             List all priorities instead of searching. Priority
-            names work in zammad_create_ticket, zammad_update_ticket, and zammad_search_tickets.
+            names work in zammad_create_ticket and zammad_search_tickets.
 
             Args:
                 params (ListParams): Validated parameters containing:

@@ -367,14 +367,13 @@ class ZammadClient:
         article_body: str,
         state: str = "new",
         priority: str = "2 normal",
-        article_type: str = "note",
     ) -> dict[str, Any]:
-        """Create a new ticket whose first article is always internal.
+        """Create a new phone ticket whose first article is an internal call record.
 
-        Raises:
-            ValueError: If article_type is not a non-sending type (note, phone).
+        The article is fixed to type phone, sender Agent, internal. Zammad never delivers phone
+        articles, and the default "auto reply (on new tickets)" trigger only matches articles
+        from sender Customer, so creating the ticket sends nothing to the customer.
         """
-        _require_non_sending_type(article_type)
         ticket_data = {
             "title": title,
             "group": group,
@@ -383,7 +382,8 @@ class ZammadClient:
             "priority": priority,
             "article": {
                 "body": article_body,
-                "type": article_type,
+                "type": "phone",
+                "sender": "Agent",
                 "internal": True,
             },
         }

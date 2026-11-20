@@ -78,43 +78,17 @@ async def _call_expecting_error(server: ZammadMCPServer, name: str, arguments: d
     return str(exc_info.value)
 
 
-# --- zammad_add_article (tool boundary) ---------------------------------------------------------
+# --- zammad_add_article / zammad_update_ticket are not registered ------------------------------
 
 
+@pytest.mark.parametrize("name", ["zammad_add_article", "zammad_update_ticket", "zammad_bulk_update_tickets"])
 @pytest.mark.asyncio
-async def test_add_article_rejects_email_type(harness: Harness) -> None:
-    message = await _call_expecting_error(
-        harness.server, "zammad_add_article", {"ticket_id": 1, "body": "hi", "article_type": "email"}
-    )
-    assert "article_type" in message
-    harness.zammad.add_article.assert_not_called()
-
-
-@pytest.mark.parametrize("field", ["internal", "to", "cc", "subject"])
-@pytest.mark.asyncio
-async def test_add_article_rejects_mail_and_visibility_fields(harness: Harness, field: str) -> None:
-    value: Any = False if field == "internal" else "x@example.com"
-    message = await _call_expecting_error(
-        harness.server, "zammad_add_article", {"ticket_id": 1, "body": "hi", field: value}
-    )
-    assert field in message
-    harness.zammad.add_article.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_add_article_schema_exposes_only_non_sending_types(harness: Harness) -> None:
+async def test_article_capable_tools_are_not_registered(harness: Harness, name: str) -> None:
     async with Client(harness.server.mcp) as client:
-        tools = {tool.name: tool.inputSchema for tool in await client.list_tools()}
-    properties = tools["zammad_add_article"]["properties"]
-    assert properties["article_type"]["enum"] == ["note", "phone"]
-    assert not {"internal", "to", "cc", "subject"} & set(properties)
-
-
-@pytest.mark.asyncio
-async def test_add_article_accepts_phone_type(harness: Harness) -> None:
-    async with Client(harness.server.mcp) as client:
-        await client.call_tool("zammad_add_article", {"ticket_id": 1, "body": "Call", "article_type": "phone"})
-    assert harness.zammad.add_article.call_args.kwargs["article_type"] == "phone"
+        names = {tool.name for tool in await client.list_tools()}
+    assert name not in names
+    harness.zammad.add_article.assert_not_called()
+    harness.zammad.update_ticket.assert_not_called()
 
 
 # --- zammad_create_ticket (tool boundary) -------------------------------------------------------
@@ -122,22 +96,39 @@ async def test_add_article_accepts_phone_type(harness: Harness) -> None:
 TICKET_ARGS = {"title": "T", "group": "Support", "customer": "c@example.com", "article_body": "Hello"}
 
 
+@pytest.mark.parametrize("article_type", ["email", "note", "phone"])
 @pytest.mark.asyncio
-async def test_create_ticket_rejects_email_article_type(harness: Harness) -> None:
+async def test_create_ticket_rejects_article_type_field(harness: Harness, article_type: str) -> None:
+    """The article type is fixed to phone; the tool does not accept the field at all."""
     message = await _call_expecting_error(
-        harness.server, "zammad_create_ticket", {**TICKET_ARGS, "article_type": "email"}
+        harness.server, "zammad_create_ticket", {**TICKET_ARGS, "article_type": article_type}
     )
     assert "article_type" in message
     harness.zammad.create_ticket.assert_not_called()
 
 
+@pytest.mark.parametrize("field", ["article_internal", "article_sender", "sender", "to", "cc", "subject"])
 @pytest.mark.asyncio
-async def test_create_ticket_rejects_article_internal_flag(harness: Harness) -> None:
-    message = await _call_expecting_error(
-        harness.server, "zammad_create_ticket", {**TICKET_ARGS, "article_internal": False}
-    )
-    assert "article_internal" in message
+async def test_create_ticket_rejects_mail_and_visibility_fields(harness: Harness, field: str) -> None:
+    message = await _call_expecting_error(harness.server, "zammad_create_ticket", {**TICKET_ARGS, field: "x"})
+    assert field in message
     harness.zammad.create_ticket.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_ticket_schema_has_no_article_options(harness: Harness) -> None:
+    async with Client(harness.server.mcp) as client:
+        tools = {tool.name: tool.inputSchema for tool in await client.list_tools()}
+    properties = set(tools["zammad_create_ticket"]["properties"])
+    assert properties == {"title", "group", "customer", "article_body", "state", "priority"}
+
+
+@pytest.mark.asyncio
+async def test_create_ticket_passes_no_article_options_to_client(harness: Harness) -> None:
+    async with Client(harness.server.mcp) as client:
+        await client.call_tool("zammad_create_ticket", TICKET_ARGS)
+    kwargs = harness.zammad.create_ticket.call_args.kwargs
+    assert set(kwargs) == {"title", "group", "customer", "article_body", "state", "priority"}
 
 
 # --- ZammadClient (last line of defence) --------------------------------------------------------
@@ -165,29 +156,24 @@ def test_client_add_article_has_no_mail_parameters(zammad_api: MagicMock, field:
     zammad_api.ticket_article.create.assert_not_called()
 
 
-def test_client_create_ticket_always_internal(zammad_api: MagicMock) -> None:
+def test_client_create_ticket_is_internal_agent_phone(zammad_api: MagicMock) -> None:
+    """Phone type, Agent sender, internal: Zammad delivers nothing, and the default
+    "auto reply (on new tickets)" trigger (articles from sender Customer) does not match."""
     zammad_api.ticket.create.return_value = {"id": 1}
     ZammadClient().create_ticket(title="T", group="G", customer="c@example.com", article_body="b")
     article = zammad_api.ticket.create.call_args[0][0]["article"]
-    assert article == {"body": "b", "type": "note", "internal": True}
+    assert article == {"body": "b", "type": "phone", "sender": "Agent", "internal": True}
 
 
-def test_client_create_ticket_rejects_sending_type(zammad_api: MagicMock) -> None:
-    with pytest.raises(ValueError, match="article_type"):
-        ZammadClient().create_ticket(
-            title="T", group="G", customer="c@example.com", article_body="b", article_type="email"
-        )
-    zammad_api.ticket.create.assert_not_called()
-
-
-def test_client_create_ticket_has_no_article_internal_parameter(zammad_api: MagicMock) -> None:
+@pytest.mark.parametrize("field", ["article_type", "article_internal", "article_sender"])
+def test_client_create_ticket_has_no_article_parameters(zammad_api: MagicMock, field: str) -> None:
     with pytest.raises(TypeError):
         ZammadClient().create_ticket(
             title="T",
             group="G",
             customer="c@example.com",
             article_body="b",
-            article_internal=False,  # type: ignore[call-arg]
+            **{field: "email"},  # type: ignore[arg-type]
         )
     zammad_api.ticket.create.assert_not_called()
 
@@ -195,16 +181,6 @@ def test_client_create_ticket_has_no_article_internal_parameter(zammad_api: Magi
 # --- zammad_update_ticket: no articles through custom_fields ------------------------------------
 
 EMAIL_ARTICLE = {"type": "email", "internal": False, "to": "customer@example.com", "body": "hi"}
-
-
-@pytest.mark.parametrize("key", ["article", "Article", " article ", "article_attributes"])
-@pytest.mark.asyncio
-async def test_update_ticket_rejects_article_in_custom_fields(harness: Harness, key: str) -> None:
-    message = await _call_expecting_error(
-        harness.server, "zammad_update_ticket", {"ticket_id": 1, "custom_fields": {key: EMAIL_ARTICLE}}
-    )
-    assert "article" in message.lower()
-    harness.zammad.update_ticket.assert_not_called()
 
 
 @pytest.mark.parametrize("key", ["article", "ARTICLE"])

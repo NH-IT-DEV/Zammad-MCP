@@ -511,7 +511,6 @@ class TestZammadClientMethods:
             article_body="Please help!",
             state="open",
             priority="3 high",
-            article_type="phone",
         )
 
         assert result["id"] == 1
@@ -522,7 +521,7 @@ class TestZammadClientMethods:
                 "customer": "customer@example.com",
                 "state": "open",
                 "priority": "3 high",
-                "article": {"body": "Please help!", "type": "phone", "internal": True},
+                "article": {"body": "Please help!", "type": "phone", "sender": "Agent", "internal": True},
             }
         )
 
