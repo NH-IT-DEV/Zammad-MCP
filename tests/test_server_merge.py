@@ -63,14 +63,3 @@ def test_merge_tool_surfaces_client_failure(merge_tool) -> None:
 
     with pytest.raises(ValueError, match="refused to merge"):
         tool(**TicketMergeParams(source_ticket_id=10, target_ticket_number="20002").model_dump())
-
-
-@pytest.mark.asyncio
-async def test_merge_tool_is_annotated_destructive() -> None:
-    tools = await ZammadMCPServer().mcp.list_tools()
-    merge = next(tool for tool in tools if tool.name == "zammad_merge_tickets")
-
-    assert merge.annotations.title == "Merge Tickets"
-    assert merge.annotations.destructiveHint is True
-    assert merge.annotations.readOnlyHint is False
-    assert merge.annotations.idempotentHint is False

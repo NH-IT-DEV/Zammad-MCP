@@ -206,8 +206,7 @@ async def test_server_initialization(mock_zammad_client):
         "zammad_search_tickets",
         "zammad_get_ticket",
         "zammad_create_ticket",
-        "zammad_update_ticket",
-        "zammad_add_article",
+        "zammad_create_reply_draft",
         "zammad_get_user",
         "zammad_search_users",
         "zammad_get_organization",
@@ -216,11 +215,7 @@ async def test_server_initialization(mock_zammad_client):
         "zammad_list_ticket_states",
         "zammad_list_ticket_priorities",
         "zammad_get_ticket_stats",
-        "zammad_add_ticket_tag",
-        "zammad_remove_ticket_tag",
-        "zammad_bulk_update_tickets",
         "zammad_get_current_user",
-        "zammad_export_tickets",
         "zammad_list_events",
     ]
     for tool in expected_tools:
@@ -521,7 +516,7 @@ async def test_create_ticket_customer_not_found_error(mock_zammad_client):
     with pytest.raises(ValueError) as exc_info:
         await tool.run({"title": "Test", "group": "Support", "customer": "new@example.com", "article_body": "Body"})
 
-    assert "zammad_create_user" in str(exc_info.value)
+    assert "zammad_search_users" in str(exc_info.value)
 
 
 def test_add_article_tool(mock_zammad_client, sample_article_data, decorator_capturer):

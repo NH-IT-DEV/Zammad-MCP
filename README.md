@@ -10,28 +10,26 @@ An MCP server that connects AI assistants to Zammad, providing tools for managin
 
 ## Features
 
+> **Fork boundary**: this fork is read-only except for two write tools: `zammad_create_ticket` (phone tickets only)
+> and `zammad_create_reply_draft`. Any other tool that is not annotated `readOnlyHint=True` is never registered,
+> including write tools added upstream later (`PERMITTED_WRITE_TOOLS` in `mcp_zammad/server.py`). The server cannot
+> send mail, update, merge, tag, or bulk-edit tickets, add articles, create users, or export tickets.
+
 ### Tools
 
 - **Ticket Management**
   - `zammad_search_tickets` - Search tickets with multiple filters
   - `zammad_get_ticket` - Get detailed ticket information with articles (supports pagination); custom object attributes are included
-  - `zammad_create_ticket` - Create new tickets
-  - `zammad_update_ticket` - Update ticket properties, including custom object attributes via `custom_fields`
-  - `zammad_add_article` - Add internal notes or phone articles to tickets (always internal; never sent to the customer)
+  - `zammad_create_ticket` - Create a phone ticket for a customer call. The first article is always type phone, sender Agent, internal: nothing is sent, and Zammad's default auto reply trigger (sender Customer) does not fire
   - `zammad_create_reply_draft` - Store a reply as a Zammad shared draft (needs Zammad 6.0+). The server cannot send mail; an agent sends the draft manually in Zammad
-  - `zammad_merge_tickets` - Merge a ticket into another (irreversible)
-  - `zammad_add_ticket_tag` / `zammad_remove_ticket_tag` - Manage ticket tags
-  - `zammad_bulk_update_tickets` - Update, assign, tag, or close up to 100 tickets in one call with per-ticket failure reporting
   - `zammad_get_ticket_tags` - Get tags assigned to a specific ticket
   - `zammad_list_tags` - List all tags defined in the system (requires admin.tag permission)
-  - `zammad_export_tickets` - Export tickets with their conversation articles to a JSONL file on the server host (requires `ZAMMAD_EXPORT_DIR`; see [Ticket Export](#ticket-export-optional))
 
 - **Attachment Support**
   - `zammad_get_article_attachments` - List attachments for a ticket article
   - `zammad_download_attachment` - Download attachment content (base64-encoded)
 
 - **User & Organization Management**
-  - `zammad_create_user` - Create a Zammad user
   - `zammad_get_user` / `zammad_search_users` - User information and search
   - `zammad_get_organization` / `zammad_search_organizations` - Organization data
   - `zammad_get_current_user` - Get authenticated user info
@@ -216,12 +214,6 @@ Audit logging is disabled by default. When `ZAMMAD_AUDIT_LOG_ENABLED` is set, th
 per tool call, connection attempt, and URL security check to `stderr`, a file, or syslog, with secrets redacted.
 See [Audit logging](docs/reference/configuration.md#audit-logging) for the variables and the record format.
 
-### Ticket Export (Optional)
-
-`zammad_export_tickets` writes a JSON Lines file on the host that runs the MCP server. It is disabled until
-`ZAMMAD_EXPORT_DIR` names an existing directory, and every output path must resolve inside that directory.
-See [Ticket export](docs/reference/configuration.md#ticket-export) for the variables, filters, and confinement rules.
-
 **Important**: Keep your `.env` file out of version control (already in `.gitignore`).
 
 ## Response Formats
@@ -233,7 +225,7 @@ Tools that return Markdown by default accept a `response_format` parameter with 
 
 These are the search, get, and list tools for tickets, users, organizations, groups, states, priorities, tags, and
 knowledge base content. The write tools, `zammad_get_article_attachments`, `zammad_download_attachment`,
-`zammad_get_current_user`, `zammad_get_ticket_stats`, `zammad_export_tickets`, and `zammad_list_events` return
+`zammad_get_current_user`, `zammad_get_ticket_stats`, and `zammad_list_events` return
 structured results and have no `response_format` parameter.
 
 Example:
@@ -340,22 +332,21 @@ the status codes, and the polling procedure.
 Use zammad_search_tickets with state="open" to find all open tickets
 ```
 
-### Create a Support Ticket
+### Record a Customer Call as a Phone Ticket
 
 ```text
 Use zammad_create_ticket with:
-- title: "Customer needs help with login"
+- title: "Login fails after password change"
 - group: "Support"
 - customer: "customer@example.com"
-- article_body: "Customer reported unable to login..."
+- article_body: "Customer called: cannot log in since the password change this morning..."
 ```
 
-### Update and Respond to a Ticket
+### Prepare a Reply
 
 ```text
 1. Use zammad_get_ticket with ticket_id=123 to see the full conversation
 2. Use zammad_create_reply_draft to store your response as a draft (an agent sends it in Zammad)
-3. Use zammad_update_ticket to change state to "pending reminder" with a pending_time (e.g. "2026-07-01T08:00:00Z")
 ```
 
 ### Analyze Escalated Tickets
@@ -363,33 +354,6 @@ Use zammad_create_ticket with:
 ```text
 Use the escalation_summary prompt to get a report of all tickets approaching escalation
 ```
-
-### Upload Attachments to a Ticket
-
-```text
-Use zammad_add_article with attachments parameter:
-- ticket_id: 123
-- body: "See attached documentation"
-- attachments: [
-    {
-      "filename": "guide.pdf",
-      "data": "JVBERi0xLjQKJ...",  # base64-encoded content
-      "mime_type": "application/pdf"
-    }
-  ]
-```
-
-### Merge Duplicate Tickets
-
-Useful for collapsing recurring auto-generated tickets (cron failures, monitoring noise) into one incident. The source ticket's articles move to the target and the source is closed as "merged". This cannot be undone.
-
-```text
-Use zammad_merge_tickets with:
-- source_ticket_id: 123          # internal ID of the ticket to merge away
-- target_ticket_number: "20002"  # display number of the surviving ticket
-```
-
-`target_ticket_id` may be given instead of `target_ticket_number`, but not both.
 
 ## Development
 

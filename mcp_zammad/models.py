@@ -295,15 +295,14 @@ class Ticket(BaseModel):
 
 
 class TicketCreate(StrictBaseModel):
-    """Create ticket request."""
+    """Create phone ticket request (article type, sender and visibility are fixed by the client)."""
 
     title: str = Field(description="Ticket title/subject", max_length=200)
     group: str = Field(description="Group name or ID", max_length=100)
     customer: str = Field(description="Customer email or ID", max_length=255)
-    article_body: str = Field(description="Initial article/comment body", max_length=100000)
+    article_body: str = Field(description="Call notes: what the caller reported or asked for", max_length=100000)
     state: str = Field(default="new", description="State name (new, open, pending reminder, etc.)", max_length=100)
     priority: str = Field(default="2 normal", description="Priority name (1 low, 2 normal, 3 high)", max_length=100)
-    article_type: ArticleType = Field(default=ArticleType.NOTE, description="Article type (note, phone)")
 
     @field_validator("title", "article_body")
     @classmethod

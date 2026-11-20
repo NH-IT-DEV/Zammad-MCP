@@ -65,18 +65,6 @@ async def test_tools_raise_errors_instead_of_returning_error_strings(server: Zam
 
 
 @pytest.mark.asyncio
-async def test_export_description_states_the_export_dir_requirement(
-    server: ZammadMCPServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.delenv("ZAMMAD_EXPORT_DIR", raising=False)
-    async with Client(server.mcp) as client:
-        with pytest.raises(ToolError, match="ZAMMAD_EXPORT_DIR is not set"):
-            await client.call_tool("zammad_export_tickets", {"output_path": "out.jsonl"})
-    description = (await _tools(server))["zammad_export_tickets"].description or ""
-    assert re.search(r"ZAMMAD_EXPORT_DIR[^.]*\b(?:not set|unset)\b", description)
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
